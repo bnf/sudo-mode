@@ -24,6 +24,10 @@ define(
             this.response = message.response;
             this.processToken = message.processToken;
             this.modal = null;
+            this.resolve = message.resolve || null;
+            this.reject = message.reject || null;
+            this.nextMiddleware = message.nextMiddleware || null;
+            this.request = message.request || null;
         }
 
         EventHandler.prototype.handle = function() {
@@ -36,11 +40,6 @@ define(
         EventHandler.prototype.showModal = function(instruction) {
             var that = this;
             var $content = $(instruction.content);
-            var $form = $content.find('#' + instruction.formId)
-                .on('submit', function(evt) {
-                    evt.preventDefault();
-                    that.verifyAction(instruction, $form, $invalid);
-                });
             var $invalid = $content.find('#' + instruction.invalidId)
                 .hide();
 
@@ -54,8 +53,11 @@ define(
                         btnClass: 'btn-default',
                         text: instruction.button.cancel,
                         trigger: function(evt) {
+                            console.log('cancel btn', evt, that.canCancel)
                             if (that.canCancel) {
                                 that.cancelAction(instruction);
+                                that.resolve(that.response)
+                                // @todo remove
                                 that.broadcast('revert');
                             }
                             that.modal.trigger('modal-dismiss');
@@ -65,47 +67,87 @@ define(
                         btnClass: 'btn-warning',
                         text: instruction.button.confirm,
                         trigger: function(evt) {
-                            $form.submit();
+                            evt.preventDefault();
+                            var form = evt.currentTarget.parentElement.parentElement.querySelector('#' + instruction.formId);
+                            var isInIframe = window.location !== window.parent.location;
+                            if (isInIframe) {
+                                top.require(['jquery'], function($) {
+                                    $(form).submit();
+                                });
+                            } else {
+                                $(form).submit()
+                            }
                         }
                     }
                 ]
             }).on('shown.bs.modal', function(evt) {
                 if (RsaEncryption) {
+                    var form = that.modal.find('#' + instruction.formId).get(0)
+                    var isInIframe = window.location !== window.parent.location;
                     // TYPO3 v9 ext:rsaauth initialization
-                    RsaEncryption.registerForm($form.get(0));
+                    if (isInIframe) {
+                        // No need for opt! module, as we already know that RsaEcnryption is available
+                        top.require(['TYPO3/CMS/Rsaauth/RsaEncryptionModule'], function(RsaEncryption) {
+                            RsaEncryption.registerForm(form);
+                        })
+                    } else {
+                        RsaEncryption.registerForm(form);
+                    }
                 }
             }).on('hidden.bs.modal', function(evt) {
                 if (that.canCancel) {
                     that.cancelAction(instruction);
+                    that.resolve(that.response)
+                    // @todo remove
                     that.broadcast('revert');
                 }
                 // remove memory reference with next tick
                 setTimeout(function() {
                     that.modal = null;
                 }, 0);
-            });
+            })
+
+            var form = this.modal.find('#' + instruction.formId).get(0)
+            var generateSubmitHandler = function($) {
+              return function (evt) {
+                evt.preventDefault();
+                that.verifyAction(instruction, $(evt.currentTarget), $invalid);
+              }
+            }
+            var isInIframe = window.location !== window.parent.location;
+            if (isInIframe) {
+                top.require(['jquery'], function($) {
+                    $(form).on('submit', generateSubmitHandler($));
+                });
+            } else {
+                $(form).on('submit', generateSubmitHandler($));
+            }
         }
 
         EventHandler.prototype.isRelevant = function() {
             var expectedValue = 'sudo-mode:confirmation-request';
-            return this.response.headers
-                && (
-                    this.response.headers instanceof Map
-                        && this.response.headers.get('x-typo3-emitevent') === expectedValue
-                    || this.response.headers instanceof Object
-                        && this.response.headers['x-typo3-emitevent'] === expectedValue
-                );
+            return this.response.headers && this.response.headers.get('x-typo3-emitevent') === expectedValue;
         }
 
         EventHandler.prototype.requestAction = function() {
             var that = this;
-            $.ajax({
-                method: 'GET',
-                dataType: 'json',
-                url: this.response.body.uri
-            }).done(function(response) {
-                that.showModal(response);
-            });
+            var req = function(uri) {
+                $.ajax({
+                    method: 'GET',
+                    dataType: 'json',
+                    url: uri
+                }).done(function(response) {
+                    that.showModal(response);
+                });
+            };
+            if (this.response instanceof Response) {
+                this.response.clone().json().then(function(body) {
+                    req(body.uri)
+                });
+            } else {
+                // @todo drop, it is unneeded
+                req(this.response.body.uri);
+            }
         }
 
         EventHandler.prototype.verifyAction = function(instruction, $form, $invalid) {
@@ -120,7 +162,13 @@ define(
                 contentType: false
             }).done(function(response, status, xhr) {
                 that.canCancel = false;
-                that.broadcast(that.action);
+                if (that.resolve) {
+                    console.log('success sudo', {response, status, xhr})
+                    // Re-issue the original request, now that the session is privileged
+                    that.nextMiddleware(that.request).then(that.resolve, that.reject);
+                } else {
+                    that.broadcast(that.action);
+                }
                 that.modal.trigger('modal-dismiss');
             }).fail(function(xhr, status, error) {
                 $invalid.show();

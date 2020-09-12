@@ -5,3 +5,5 @@ $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['proc
 $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_tcemain.php']['processCmdmapClass'][\FriendsOfTYPO3\SudoMode\Hook\DataManipulationHook::class] = \FriendsOfTYPO3\SudoMode\Hook\DataManipulationHook::class;
 
 $GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['typo3/backend.php']['renderPreProcess'][\FriendsOfTYPO3\SudoMode\Hook\BackendResourceHook::class] = \FriendsOfTYPO3\SudoMode\Hook\BackendResourceHook::class . '->applyResources';
+
+$GLOBALS['TYPO3_CONF_VARS']['SC_OPTIONS']['t3lib/class.t3lib_pagerenderer.php']['render-preProcess'][\FriendsOfTYPO3\SudoMode\Hook\BackendResourceHook::class] = \FriendsOfTYPO3\SudoMode\Hook\BackendResourceHook::class . '->applyResourcesToPageRenderer';
